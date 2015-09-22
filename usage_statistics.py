@@ -1,42 +1,14 @@
 #!/usr/bin/python
 #coding: UTF-8
-# based on seafobj backend of Seafile
 import rados
 import Queue
 import argparse
+import os
 
-from ctypes import c_char_p
+os.environ['SEAFILE_CONF_DIR'] = "."
 
-
-def ioctx_set_namespace(ioctx, namespace):
-    '''Python rados client has no binding for rados_ioctx_set_namespace, we
-    add it here.
-
-    '''
-    ioctx.require_ioctx_open()
-    if isinstance(namespace, unicode):
-        namespace = namespace.encode('UTF-8')
-
-    if not isinstance(namespace, str):
-        raise TypeError('namespace must be a string')
-
-    rados.run_in_thread(ioctx.librados.rados_ioctx_set_namespace,
-                        (ioctx.io, c_char_p(namespace)))
-
-
-def to_utf8(s):
-    if isinstance(s, unicode):
-        s = s.encode('utf-8')
-
-    return s
-
-
-class CephConf(object):
-    def __init__(self, ceph_conf_file, pool_name, ceph_client_id):
-        self.pool_name = pool_name
-        self.ceph_conf_file = ceph_conf_file
-        self.ceph_client_id = ceph_client_id
-
+from seafobj.utils.ceph_utils import ioctx_set_namespace
+from seafobj.backends.ceph import CephConf, IoCtxPool
 
 class LibraryStatistics(object):
     def __init__(self, uuid):
@@ -61,62 +33,6 @@ class LibraryStatistics(object):
                    self.sizes['fs'], self.objects['fs'],
                    self.sizes['blocks'], self.objects['blocks'],
                    self.sizes['sum'], self.objects['sum']))
-
-
-class IoCtxPool(object):
-    '''since we need to set the namespace before read the object, we need to
-    use a different ioctx per thread.
-
-    '''
-    def __init__(self, conf, pool_size=5):
-        self.conf = conf
-        self.pool = Queue.Queue(pool_size)
-        if conf.ceph_client_id:
-            self.cluster = rados.Rados(conffile=conf.ceph_conf_file,
-                                       rados_id=conf.ceph_client_id)
-        else:
-            self.cluster = rados.Rados(conffile=conf.ceph_conf_file)
-
-    def get_ioctx(self, repo_id):
-        try:
-            ioctx = self.pool.get(False)
-        except Queue.Empty:
-            ioctx = self.create_ioctx()
-
-        ioctx_set_namespace(ioctx, repo_id)
-
-        return ioctx
-
-    def create_ioctx(self):
-        if self.cluster.state != 'connected':
-            self.cluster.connect()
-
-        ioctx = self.cluster.open_ioctx(self.conf.pool_name)
-        return ioctx
-
-    def return_ioctx(self, ioctx):
-        try:
-            self.pool.put(ioctx, False)
-        except Queue.Full:
-            ioctx.close()
-
-
-class SeafCephClient(object):
-    '''Wraps a Ceph ioctx'''
-    def __init__(self, conf):
-        self.ioctx_pool = IoCtxPool(conf)
-
-    def read_object_content(self, repo_id, obj_id):
-        repo_id = to_utf8(repo_id)
-        obj_id = to_utf8(obj_id)
-
-        ioctx = self.ioctx_pool.get_ioctx(repo_id)
-
-        try:
-            stat = ioctx.stat(obj_id)
-            return ioctx.read(obj_id, length=stat[0])
-        finally:
-            self.ioctx_pool.return_ioctx(ioctx)
 
 
 def main():
