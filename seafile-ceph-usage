@@ -49,7 +49,7 @@ def main():
                             default='seafile-commits',
                             help="ceph pool containing commit objects")
     cmd_parser.add_argument("--fs-pool", "-f", dest="fs",
-                            default='seafile-commits',
+                            default='seafile-fs',
                             help="ceph pool containing fs objects")
     cmd_parser.add_argument("--config", dest="config",
                             default='/etc/ceph/ceph.conf',
