@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from collections import OrderedDict
 
 os.environ['SEAFILE_CONF_DIR'] = "."
 
@@ -64,9 +65,9 @@ def main():
     pool = IoCtxPool(conf)
 
     # get objects of all namespaces for every pool
-    # FIXME sorted dict!, commits first!
-    ceph_pools = {'commits': args.commits,
-                  'fs': args.fs, 'blocks': args.blocks}
+    # commits first!
+    ceph_pools = OrderedDict([('commits', args.commits),
+                              ('fs', args.fs), ('blocks', args.blocks)])
 
     for objtype, poolname in ceph_pools.items():
         pool.conf.pool_name = poolname
