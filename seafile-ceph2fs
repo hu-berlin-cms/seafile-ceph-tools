@@ -1,0 +1,86 @@
+#!/usr/bin/python
+#coding: UTF-8
+import argparse
+import os
+import sys
+
+os.environ['SEAFILE_CONF_DIR'] = "."
+
+from seafobj.utils.ceph_utils import ioctx_set_namespace
+from seafobj.backends.ceph import CephConf, IoCtxPool
+
+obj_types = ['fs', 'commits', 'blocks']
+
+
+def write_obj_to_fs(base_path, objtype, repo, obj_id, data):
+    objpath = os.path.join(base_path, objtype, repo, obj_id[:2])
+    path = os.path.join(objpath, obj_id[2:])
+    if not os.path.exists(objpath):
+        os.makedirs(objpath)
+    with open(path, 'wb+') as f:
+        f.write(data)
+
+
+def main():
+    # parse command line
+    cmd_parser = argparse.ArgumentParser(
+        description="copy objects from ceph backend to fs backend"
+    )
+    cmd_parser.add_argument("--client", "--id", "-i", dest="client",
+                            default='seafile', help="ceph client id")
+    cmd_parser.add_argument("--blocks-pool", "-b", dest="blocks",
+                            default='seafile-blocks',
+                            help="ceph pool containing block objects")
+    cmd_parser.add_argument("--commits-pool", "-c", dest="commits",
+                            default='seafile-commits',
+                            help="ceph pool containing commit objects")
+    cmd_parser.add_argument("--fs-pool", "-f", dest="fs",
+                            default='seafile-fs',
+                            help="ceph pool containing fs objects")
+    cmd_parser.add_argument("--config", dest="config",
+                            default='/etc/ceph/ceph.conf',
+                            help="ceph.conf")
+    cmd_parser.add_argument("tpath", metavar="TARGETPATH",
+                            help="Target path for fs backend objects")
+    cmd_parser.add_argument('-V', '--verbose', action="store_true",
+                            dest="verbose",
+                            help="Give detailed information, if possible")
+    args = cmd_parser.parse_args()
+
+    # check target dir exists and is empty; --force?
+    if not os.path.isdir(args.tpath):
+        print "target path %s doesn't exist" % args.tpath
+        sys.exit(-1)
+
+    if os.listdir(args.tpath):
+        print "target path %s is not empty!" % args.tpath
+        sys.exit(-1)
+
+    # create dir structure
+    for objtype in obj_types:
+        os.mkdir(os.path.join(args.tpath, objtype))
+
+    conf = CephConf(args.config, args.commits, args.client)
+    pool = IoCtxPool(conf)
+
+    # get objects of all namespaces for every pool
+    # FIXME sorted dict!, commits first!
+    ceph_pools = {'commits': args.commits,
+                  'fs': args.fs, 'blocks': args.blocks}
+
+    for objtype, poolname in ceph_pools.items():
+        pool.conf.pool_name = poolname
+        ioctx = pool.create_ioctx()
+        ioctx_set_namespace(ioctx, '\001')
+        for obj in ioctx.list_objects():
+            # set namespace for object
+            ioctx_set_namespace(ioctx, obj.nspace)
+            # copy object
+            write_obj_to_fs(args.tpath, objtype, obj.nspace, obj.key,
+                            ioctx.read(obj.key,
+                                       length=ioctx.stat(obj.key)[0]))
+        ioctx.close()
+
+
+if __name__ == '__main__':
+    main()
