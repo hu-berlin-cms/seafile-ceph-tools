@@ -20,3 +20,8 @@ Example crontab:
 ## seafile-ceph2fs
 
 Copy Seafile objects from ceph backend to filesystem backend. This could be helpful for making backups.
+
+
+## seafile-ceph-empty
+
+Helper script for TESTING only. DELETES ALL OBJECTS in a pool.
