@@ -123,6 +123,11 @@ def main():
                                            length=ioctx.stat(obj.key)[0]))
                 # add new file to index
                 findex[objtype][obj.nspace].add(obj.key)
+                if args.verbose:
+                    print "copied %s/%s to fs" % (obj.nspace, obj.key)
+            else:
+                if args.verbose:
+                    print "skipped %s/%s" % (obj.nspace, obj.key)
 
 #            # remove found object from del findex
 #            del_findex[obj.nspace].discard(obj.key)
