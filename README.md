@@ -28,4 +28,4 @@ For this to work without an external source for the namespaces, at least [Ceph 0
 
 Helper script for TESTING only. DELETES ALL OBJECTS in a pool.
 
-[1](http://tracker.ceph.com/issues/9031)
+[1]: http://tracker.ceph.com/issues/9031
