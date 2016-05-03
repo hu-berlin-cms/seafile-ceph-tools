@@ -21,7 +21,11 @@ Example crontab:
 
 Copy Seafile objects from ceph backend to filesystem backend. This could be helpful for making backups.
 
+For this to work without an external source for the namespaces, at least [Ceph 0.88 is needed][1]. So you **need Ceph Hammer (0.94)**, if you run stable releases. Support for external namespace sources isn't implemented, yet.
+
 
 ## seafile-ceph-empty
 
 Helper script for TESTING only. DELETES ALL OBJECTS in a pool.
+
+[1](http://tracker.ceph.com/issues/9031)
