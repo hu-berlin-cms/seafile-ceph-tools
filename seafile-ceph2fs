@@ -4,6 +4,10 @@ import argparse
 import os
 import sys
 from collections import OrderedDict
+#import copy
+import pickle
+import errno
+from time import time, strftime, localtime
 
 os.environ['SEAFILE_CONF_DIR'] = "."
 
@@ -38,29 +42,68 @@ def main():
     cmd_parser.add_argument("--fs-pool", "-f", dest="fs",
                             default='seafile-fs',
                             help="ceph pool containing fs objects")
+    cmd_parser.add_argument("--index", "-d", dest="index",
+                            help="file containing file index cache"
+                            " (local data)")
     cmd_parser.add_argument("--config", dest="config",
                             default='/etc/ceph/ceph.conf',
                             help="ceph.conf")
+    cmd_parser.add_argument('--onetime', action="store_true", dest="onetime",
+                            help="Only run once, empty target, no sync")
     cmd_parser.add_argument("tpath", metavar="TARGETPATH",
                             help="Target path for fs backend objects")
+    cmd_parser.add_argument('-t', '--time', action="store_true",
+                            dest="measure_time",
+                            help="print time needed")
+    cmd_parser.add_argument('-s', '--statistics', action="store_true",
+                            dest="print_statistics",
+                            help="print time needed")
     cmd_parser.add_argument('-V', '--verbose', action="store_true",
                             dest="verbose",
                             help="Give detailed information, if possible")
     args = cmd_parser.parse_args()
 
-    # check target dir exists and is empty; --force?
-    if not os.path.isdir(args.tpath):
-        print "target path %s doesn't exist" % args.tpath
+    if args.measure_time:
+        start_time = time()
+
+    if args.onetime:
+        print "Currently not supported!"
         sys.exit(-1)
 
-    if os.listdir(args.tpath):
+    # check index for sync
+    if not (args.index or args.onetime):
+        print "for (default) sync mode, index is needed!"
+        sys.exit(-1)
+
+    # create target path, if it doesn't exist
+    if not os.path.isdir(args.tpath):
+        os.makedirs(args.tpath)
+
+    if not os.listdir(args.tpath):
+        # first run
+        findex = {}
+        # create dir structure
+        for objtype in obj_types:
+            os.mkdir(os.path.join(args.tpath, objtype))
+
+    elif args.onetime:
         print "target path %s is not empty!" % args.tpath
         sys.exit(-1)
+    else:
+        # Sync
+        try:
+            with open(args.index, 'rb') as f:
+                findex = pickle.load(f)
+        except (IOError, OSError) as e:
+            # use empty index, if index file doesn't exist (yet)
+            if e.errno == errno.ENOENT:
+                findex = {}
+            else:
+                raise
 
-    # create dir structure
-    for objtype in obj_types:
-        os.mkdir(os.path.join(args.tpath, objtype))
-
+#    # deep copy findex to find files not in object store anymore, but still
+#    # in backup. We need to delete these
+#    del_findex = copy.deepcopy(findex)
     conf = CephConf(args.config, args.commits, args.client)
     pool = IoCtxPool(conf)
 
@@ -69,18 +112,67 @@ def main():
     ceph_pools = OrderedDict([('commits', args.commits),
                               ('fs', args.fs), ('blocks', args.blocks)])
 
+    # statistics
+    if args.print_statistics:
+        stats = {}
+
     for objtype, poolname in ceph_pools.items():
         pool.conf.pool_name = poolname
+        if args.print_statistics:
+            stats[objtype] = {'copied': 0, 'skipped': 0}
+
+        if not objtype in findex:
+            findex[objtype] = {}
         ioctx = pool.create_ioctx()
         ioctx_set_namespace(ioctx, '\001')
+        # listing of namespaces/libraries possible?
         for obj in ioctx.list_objects():
             # set namespace for object
             ioctx_set_namespace(ioctx, obj.nspace)
-            # copy object
-            write_obj_to_fs(args.tpath, objtype, obj.nspace, obj.key,
-                            ioctx.read(obj.key,
-                                       length=ioctx.stat(obj.key)[0]))
+            # initialize, if needed
+            if not obj.nspace in findex[objtype]:
+                findex[objtype][obj.nspace] = set()
+
+            # copy (only) new objects
+            if not obj.key in findex[objtype][obj.nspace]:
+                if args.print_statistics:
+                    stats[objtype]['copied'] += 1
+
+                write_obj_to_fs(args.tpath, objtype, obj.nspace, obj.key,
+                                ioctx.read(obj.key,
+                                           length=ioctx.stat(obj.key)[0]))
+                # add new file to index
+                findex[objtype][obj.nspace].add(obj.key)
+                if args.verbose:
+                    print "copied %s/%s to fs" % (obj.nspace, obj.key)
+            else:
+                if args.print_statistics:
+                    stats[objtype]['skipped'] += 1
+
+                if args.verbose:
+                    print "skipped %s/%s" % (obj.nspace, obj.key)
+
+#            # remove found object from del findex
+#            del_findex[obj.nspace].discard(obj.key)
         ioctx.close()
+
+    # delete files missing in object store from backup
+    #for nspace
+
+    # store index
+    with open(args.index, 'wb') as f:
+        pickle.dump(findex, f, pickle.HIGHEST_PROTOCOL)
+
+    current_time_str = strftime("%Y-%m-%d %H:%M:%S %Z", localtime())
+
+    if args.measure_time:
+        print "%s time run: %s seconds" % (current_time_str, (time() - start_time))
+
+    if args.print_statistics:
+        stats_line = "%s" % current_time_str
+        for objt in obj_types:
+            stats_line += ",%s,%s" % (stats[objt]['copied'], stats[objt]['skipped'])
+        print stats_line
 
 
 if __name__ == '__main__':
