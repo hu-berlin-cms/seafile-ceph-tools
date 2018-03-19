@@ -4,7 +4,6 @@ import argparse
 import os
 import sys
 from collections import OrderedDict
-# import copy
 import pickle
 import errno
 from time import time, strftime, localtime
@@ -101,12 +100,7 @@ def copy_objects(args, ceph_pools, pool, findex, stats={}):
                 if args.verbose:
                     print "skipped %s/%s" % (obj.nspace, obj.key)
 
-#            # remove found object from del findex
-#            del_findex[obj.nspace].discard(obj.key)
         ioctx.close()
-
-    # delete files missing in object store from backup
-    # for nspace
 
 
 def main():
@@ -188,9 +182,6 @@ def main():
             else:
                 raise
 
-#    # deep copy findex to find files not in object store anymore, but still
-#    # in backup. We need to delete these
-#    del_findex = copy.deepcopy(findex)
     conf = CephConf(args.config, args.commits, args.client)
     pool = IoCtxPool(conf)
 
