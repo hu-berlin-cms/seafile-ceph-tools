@@ -30,7 +30,7 @@ def remove_repo_fs(base_path, objtype, repo):
     rmtree(os.path.join(base_path, objtype, repo))
 
 
-def prune_files(args, ceph_pools, pool, findex, stats={}):
+def prune_files(args, ceph_pools, pool, findex, stats=None):
     repos_to_remove = []
     ceph_repos = set()
 
@@ -49,6 +49,12 @@ def prune_files(args, ceph_pools, pool, findex, stats={}):
     # loop through findex
     for repo in findex['commits']:
         if repo not in ceph_repos:
+            if args.verbose:
+                print "Removing repo %s from fs" % (repo)
+
+            if stats:
+                stats['removed_repos'] += 1
+
             # can't prune findex while we are looping over it!
             # save for later pruning
             repos_to_remove.append(repo)
@@ -63,11 +69,9 @@ def prune_files(args, ceph_pools, pool, findex, stats={}):
             del findex[objtype][repo]
 
 
-def copy_objects(args, ceph_pools, pool, findex, stats={}):
+def copy_objects(args, ceph_pools, pool, findex, stats=None):
     for objtype, poolname in ceph_pools.items():
         pool.conf.pool_name = poolname
-        if args.print_statistics:
-            stats[objtype] = {'copied': 0, 'skipped': 0}
 
         if objtype not in findex:
             findex[objtype] = {}
@@ -83,7 +87,7 @@ def copy_objects(args, ceph_pools, pool, findex, stats={}):
 
             # copy (only) new objects
             if obj.key not in findex[objtype][obj.nspace]:
-                if args.print_statistics:
+                if stats:
                     stats[objtype]['copied'] += 1
 
                 write_obj_to_fs(args.tpath, objtype, obj.nspace, obj.key,
@@ -94,7 +98,7 @@ def copy_objects(args, ceph_pools, pool, findex, stats={}):
                 if args.verbose:
                     print "copied %s/%s to fs" % (obj.nspace, obj.key)
             else:
-                if args.print_statistics:
+                if stats:
                     stats[objtype]['skipped'] += 1
 
                 if args.verbose:
@@ -192,12 +196,16 @@ def main():
 
     # statistics
     if args.print_statistics:
-        stats = {}
+        stats = {'removed_repos': 0}
+        for objtype in ceph_pools.keys():
+            stats[objtype] = {'copied': 0, 'skipped': 0}
+    else:
+        stats = None
 
     if args.prune:
-        prune_files(args, ceph_pools, pool, findex)
+        prune_files(args, ceph_pools, pool, findex, stats)
     else:
-        copy_objects(args, ceph_pools, pool, findex, stats={})
+        copy_objects(args, ceph_pools, pool, findex, stats)
 
     # store index
     with open(args.index, 'wb') as f:
@@ -210,7 +218,7 @@ def main():
                                            (time() - start_time))
 
     if args.print_statistics:
-        stats_line = "%s" % current_time_str
+        stats_line = "%s,%d" % (current_time_str, stats['removed_repos'])
         for objt in obj_types:
             stats_line += ",%s,%s" % (stats[objt]['copied'],
                                       stats[objt]['skipped'])
