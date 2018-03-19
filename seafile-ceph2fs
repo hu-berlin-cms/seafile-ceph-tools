@@ -8,6 +8,7 @@ from collections import OrderedDict
 import pickle
 import errno
 from time import time, strftime, localtime
+from shutil import rmtree
 
 os.environ['SEAFILE_CONF_DIR'] = "."
 
@@ -24,6 +25,88 @@ def write_obj_to_fs(base_path, objtype, repo, obj_id, data):
         os.makedirs(objpath)
     with open(path, 'wb+') as f:
         f.write(data)
+
+
+def remove_repo_fs(base_path, objtype, repo):
+    rmtree(os.path.join(base_path, objtype, repo))
+
+
+def prune_files(args, ceph_pools, pool, findex, stats={}):
+    repos_to_remove = []
+    ceph_repos = set()
+
+    # loop through commits pool to get repos (ceph namespaces)
+    pool.conf.pool_name = ceph_pools['commits']
+    ioctx = pool.create_ioctx()
+    ioctx_set_namespace(ioctx, '\001')
+    for obj in ioctx.list_objects():
+        if obj.nspace not in ceph_repos:
+            ceph_repos.add(obj.nspace)
+
+    if len(ceph_repos) < 1:
+        print "Empty ceph pool! Perhaps a config error? Aborting pruning!"
+        sys.exit(-2)
+
+    # loop through findex
+    for repo in findex['commits']:
+        if repo not in ceph_repos:
+            # can't prune findex while we are looping over it!
+            # save for later pruning
+            repos_to_remove.append(repo)
+
+            # prune from fs (for all object types)!
+            for objtype in ceph_pools.keys():
+                remove_repo_fs(args.tpath, objtype, repo)
+
+    # prune findex
+    for repo in repos_to_remove:
+        for objtype in ceph_pools.keys():
+            del findex[objtype][repo]
+
+
+def copy_objects(args, ceph_pools, pool, findex, stats={}):
+    for objtype, poolname in ceph_pools.items():
+        pool.conf.pool_name = poolname
+        if args.print_statistics:
+            stats[objtype] = {'copied': 0, 'skipped': 0}
+
+        if objtype not in findex:
+            findex[objtype] = {}
+        ioctx = pool.create_ioctx()
+        ioctx_set_namespace(ioctx, '\001')
+        # listing of namespaces/libraries possible?
+        for obj in ioctx.list_objects():
+            # set namespace for object
+            ioctx_set_namespace(ioctx, obj.nspace)
+            # initialize, if needed
+            if obj.nspace not in findex[objtype]:
+                findex[objtype][obj.nspace] = set()
+
+            # copy (only) new objects
+            if obj.key not in findex[objtype][obj.nspace]:
+                if args.print_statistics:
+                    stats[objtype]['copied'] += 1
+
+                write_obj_to_fs(args.tpath, objtype, obj.nspace, obj.key,
+                                ioctx.read(obj.key,
+                                           length=ioctx.stat(obj.key)[0]))
+                # add new file to index
+                findex[objtype][obj.nspace].add(obj.key)
+                if args.verbose:
+                    print "copied %s/%s to fs" % (obj.nspace, obj.key)
+            else:
+                if args.print_statistics:
+                    stats[objtype]['skipped'] += 1
+
+                if args.verbose:
+                    print "skipped %s/%s" % (obj.nspace, obj.key)
+
+#            # remove found object from del findex
+#            del_findex[obj.nspace].discard(obj.key)
+        ioctx.close()
+
+    # delete files missing in object store from backup
+    # for nspace
 
 
 def main():
@@ -58,6 +141,10 @@ def main():
     cmd_parser.add_argument('-s', '--statistics', action="store_true",
                             dest="print_statistics",
                             help="print time needed")
+    cmd_parser.add_argument('--prune', action="store_true",
+                            dest="prune",
+                            help="delete objects in fs backend, "
+                            "that are gone in ceph")
     cmd_parser.add_argument('-V', '--verbose', action="store_true",
                             dest="verbose",
                             help="Give detailed information, if possible")
@@ -116,48 +203,10 @@ def main():
     if args.print_statistics:
         stats = {}
 
-    for objtype, poolname in ceph_pools.items():
-        pool.conf.pool_name = poolname
-        if args.print_statistics:
-            stats[objtype] = {'copied': 0, 'skipped': 0}
-
-        if objtype not in findex:
-            findex[objtype] = {}
-        ioctx = pool.create_ioctx()
-        ioctx_set_namespace(ioctx, '\001')
-        # listing of namespaces/libraries possible?
-        for obj in ioctx.list_objects():
-            # set namespace for object
-            ioctx_set_namespace(ioctx, obj.nspace)
-            # initialize, if needed
-            if obj.nspace not in findex[objtype]:
-                findex[objtype][obj.nspace] = set()
-
-            # copy (only) new objects
-            if obj.key not in findex[objtype][obj.nspace]:
-                if args.print_statistics:
-                    stats[objtype]['copied'] += 1
-
-                write_obj_to_fs(args.tpath, objtype, obj.nspace, obj.key,
-                                ioctx.read(obj.key,
-                                           length=ioctx.stat(obj.key)[0]))
-                # add new file to index
-                findex[objtype][obj.nspace].add(obj.key)
-                if args.verbose:
-                    print "copied %s/%s to fs" % (obj.nspace, obj.key)
-            else:
-                if args.print_statistics:
-                    stats[objtype]['skipped'] += 1
-
-                if args.verbose:
-                    print "skipped %s/%s" % (obj.nspace, obj.key)
-
-#            # remove found object from del findex
-#            del_findex[obj.nspace].discard(obj.key)
-        ioctx.close()
-
-    # delete files missing in object store from backup
-    # for nspace
+    if args.prune:
+        prune_files(args, ceph_pools, pool, findex)
+    else:
+        copy_objects(args, ceph_pools, pool, findex, stats={})
 
     # store index
     with open(args.index, 'wb') as f:
