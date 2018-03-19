@@ -1,18 +1,18 @@
 #!/usr/bin/python
-#coding: UTF-8
+# coding: UTF-8
 import argparse
 import os
 import sys
 from collections import OrderedDict
-#import copy
+# import copy
 import pickle
 import errno
 from time import time, strftime, localtime
 
 os.environ['SEAFILE_CONF_DIR'] = "."
 
-from seafobj.utils.ceph_utils import ioctx_set_namespace
-from seafobj.backends.ceph import CephConf, IoCtxPool
+from seafobj.utils.ceph_utils import ioctx_set_namespace  # noqa
+from seafobj.backends.ceph import CephConf, IoCtxPool  # noqa
 
 obj_types = ['fs', 'commits', 'blocks']
 
@@ -121,7 +121,7 @@ def main():
         if args.print_statistics:
             stats[objtype] = {'copied': 0, 'skipped': 0}
 
-        if not objtype in findex:
+        if objtype not in findex:
             findex[objtype] = {}
         ioctx = pool.create_ioctx()
         ioctx_set_namespace(ioctx, '\001')
@@ -130,11 +130,11 @@ def main():
             # set namespace for object
             ioctx_set_namespace(ioctx, obj.nspace)
             # initialize, if needed
-            if not obj.nspace in findex[objtype]:
+            if obj.nspace not in findex[objtype]:
                 findex[objtype][obj.nspace] = set()
 
             # copy (only) new objects
-            if not obj.key in findex[objtype][obj.nspace]:
+            if obj.key not in findex[objtype][obj.nspace]:
                 if args.print_statistics:
                     stats[objtype]['copied'] += 1
 
@@ -157,7 +157,7 @@ def main():
         ioctx.close()
 
     # delete files missing in object store from backup
-    #for nspace
+    # for nspace
 
     # store index
     with open(args.index, 'wb') as f:
@@ -166,12 +166,14 @@ def main():
     current_time_str = strftime("%Y-%m-%d %H:%M:%S %Z", localtime())
 
     if args.measure_time:
-        print "%s time run: %s seconds" % (current_time_str, (time() - start_time))
+        print "%s time run: %s seconds" % (current_time_str,
+                                           (time() - start_time))
 
     if args.print_statistics:
         stats_line = "%s" % current_time_str
         for objt in obj_types:
-            stats_line += ",%s,%s" % (stats[objt]['copied'], stats[objt]['skipped'])
+            stats_line += ",%s,%s" % (stats[objt]['copied'],
+                                      stats[objt]['skipped'])
         print stats_line
 
 
